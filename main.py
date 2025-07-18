@@ -8,7 +8,7 @@ from polygon import RESTClient
 
 app = FastAPI()
 
-# Allow CORS for local frontend
+# Allow CORS for all origins (frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Environment variables for API keys
+# API keys
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
@@ -26,6 +26,8 @@ client = RESTClient(POLYGON_API_KEY)
 def fetch_stock_data():
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+
     tickers = ["AAPL", "GME", "TSLA", "AMC", "NVDA", "PLTR"]  # Example tickers
 
     filtered = []
@@ -49,11 +51,15 @@ def fetch_stock_data():
             ticker_details = client.get_ticker_details(ticker)
             float_shares = ticker_details.share_class_shares_outstanding or 0
 
+            # Fetch last 5 days of price history
+            history_raw = client.get_aggs(ticker, 1, "day", five_days_ago, today)
+            price_history = [round(bar.close, 2) for bar in history_raw][:5]
+
             if (
-                1 <= volume_ratio <= 5 and
-                2 <= price <= 20 and
-                float_shares <= 1_000_000 and
-                percent_change >= 10
+                0.5 <= volume_ratio <= 10 and
+                1 <= price <= 500 and
+                float_shares <= 1_000_000_000 and
+                percent_change >= 1
             ):
                 news = fetch_news(ticker)
                 filtered.append({
@@ -62,7 +68,8 @@ def fetch_stock_data():
                     "volumeRatio": round(volume_ratio, 2),
                     "float": float_shares,
                     "percentChange": round(percent_change, 2),
-                    "news": news
+                    "news": news,
+                    "history": price_history
                 })
         except Exception as e:
             print(f"Error fetching data for {ticker}: {e}")
