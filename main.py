@@ -1,4 +1,3 @@
-# main.py (Backend API with FastAPI and Real API Integration)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import requests
@@ -8,7 +7,6 @@ from polygon import RESTClient
 
 app = FastAPI()
 
-# Allow CORS for all origins (frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API keys
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
@@ -28,9 +25,10 @@ def fetch_stock_data():
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
 
-    tickers = ["AAPL", "GME", "TSLA", "AMC", "NVDA", "PLTR"]  # Example tickers
+    tickers = ["AAPL", "GME", "TSLA", "AMC", "NVDA", "PLTR"]
+    matched = []
+    near_match = []
 
-    filtered = []
     for ticker in tickers:
         try:
             aggs_today = client.get_aggs(ticker, 1, "day", today, today)
@@ -51,31 +49,38 @@ def fetch_stock_data():
             ticker_details = client.get_ticker_details(ticker)
             float_shares = ticker_details.share_class_shares_outstanding or 0
 
-            # Fetch last 5 days of price history
             history_raw = client.get_aggs(ticker, 1, "day", five_days_ago, today)
             price_history = [round(bar.close, 2) for bar in history_raw][:5]
 
+            stock_data = {
+                "ticker": ticker,
+                "price": round(price, 2),
+                "volumeRatio": round(volume_ratio, 2),
+                "float": float_shares,
+                "percentChange": round(percent_change, 2),
+                "news": fetch_news(ticker),
+                "history": price_history
+            }
+
+            # Main strict filters
             if (
-                0.5 <= volume_ratio <= 10 and
-                1 <= price <= 500 and
-                float_shares <= 1_000_000_000 and
-                percent_change >= 1
+                1 <= price <= 20 and
+                1 <= volume_ratio <= 5 and
+                float_shares <= 1_000_000 and
+                percent_change >= 10
             ):
-                news = fetch_news(ticker)
-                filtered.append({
-                    "ticker": ticker,
-                    "price": round(price, 2),
-                    "volumeRatio": round(volume_ratio, 2),
-                    "float": float_shares,
-                    "percentChange": round(percent_change, 2),
-                    "news": news,
-                    "history": price_history
-                })
+                matched.append(stock_data)
+            else:
+                near_match.append(stock_data)
+
         except Exception as e:
-            print(f"Error fetching data for {ticker}: {e}")
+            print(f"Error with {ticker}: {e}")
             continue
 
-    return filtered
+    return {
+        "matched": matched,
+        "nearMatch": near_match
+    }
 
 def fetch_news(ticker):
     url = f"https://newsapi.org/v2/everything?q={ticker}&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
