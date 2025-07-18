@@ -1,3 +1,4 @@
+# main.py (Complete Backend with Filters, Charts, Search, Projected Winners)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import requests
@@ -28,6 +29,7 @@ def fetch_stock_data():
     tickers = ["AAPL", "GME", "TSLA", "AMC", "NVDA", "PLTR"]
     matched = []
     near_match = []
+    projected = []
 
     for ticker in tickers:
         try:
@@ -52,17 +54,19 @@ def fetch_stock_data():
             history_raw = client.get_aggs(ticker, 1, "day", five_days_ago, today)
             price_history = [round(bar.close, 2) for bar in history_raw][:5]
 
+            news = fetch_news(ticker)
+
             stock_data = {
                 "ticker": ticker,
                 "price": round(price, 2),
                 "volumeRatio": round(volume_ratio, 2),
                 "float": float_shares,
                 "percentChange": round(percent_change, 2),
-                "news": fetch_news(ticker),
+                "news": news,
                 "history": price_history
             }
 
-            # Main strict filters
+            # Matched filter
             if (
                 1 <= price <= 20 and
                 1 <= volume_ratio <= 5 and
@@ -73,13 +77,22 @@ def fetch_stock_data():
             else:
                 near_match.append(stock_data)
 
+            # Projected winners
+            if (
+                percent_change >= 8 and
+                volume_ratio >= 2 and
+                any(kw in news.lower() for kw in ["beat", "growth", "strong", "record", "forecast", "momentum"])
+            ):
+                projected.append(stock_data)
+
         except Exception as e:
             print(f"Error with {ticker}: {e}")
             continue
 
     return {
         "matched": matched,
-        "nearMatch": near_match
+        "nearMatch": near_match,
+        "projected": projected
     }
 
 def fetch_news(ticker):
@@ -94,3 +107,46 @@ def fetch_news(ticker):
 @app.get("/api/stocks")
 def get_stocks():
     return fetch_stock_data()
+
+@app.get("/api/stocks/{symbol}")
+def search_stock(symbol: str):
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    try:
+        aggs_today = client.get_aggs(symbol, 1, "day", today, today)
+        aggs_yesterday = client.get_aggs(symbol, 1, "day", yesterday, yesterday)
+
+        if not aggs_today or not aggs_yesterday:
+            return {"error": "Data not available"}
+
+        today_data = aggs_today[0]
+        yesterday_data = aggs_yesterday[0]
+
+        price = today_data.close
+        volume = today_data.volume
+        avg_volume = (today_data.volume + yesterday_data.volume) / 2
+        volume_ratio = volume / avg_volume if avg_volume else 0
+        percent_change = ((price - yesterday_data.close) / yesterday_data.close) * 100
+
+        ticker_details = client.get_ticker_details(symbol)
+        float_shares = ticker_details.share_class_shares_outstanding or 0
+
+        history_raw = client.get_aggs(symbol, 1, "day", five_days_ago, today)
+        price_history = [round(bar.close, 2) for bar in history_raw][:5]
+
+        news = fetch_news(symbol)
+
+        return {
+            "ticker": symbol,
+            "price": round(price, 2),
+            "volumeRatio": round(volume_ratio, 2),
+            "float": float_shares,
+            "percentChange": round(percent_change, 2),
+            "news": news,
+            "history": price_history
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
